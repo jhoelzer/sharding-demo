@@ -1,11 +1,14 @@
 import os, json
+from shutil import copyfile
 
 filename = "chapter2.txt"
+
 
 def load_data_from_file(path=None):
     with open(path if path else filename, 'r') as f:
         data = f.read()
     return data
+
 
 class ShardHandler(object):
     """
@@ -64,7 +67,11 @@ class ShardHandler(object):
         """Split the data into as many pieces as needed."""
         splicenum, rem = divmod(len(data), count)
 
-        result = [data[splicenum * z:splicenum * (z + 1)] for z in range(count)]
+        result = [
+            data[
+                splicenum * z:splicenum * (z + 1)
+            ] for z in range(count)
+        ]
         # take care of any odd characters
         if rem > 0:
             result[-1] += data[-rem:]
@@ -100,7 +107,45 @@ class ShardHandler(object):
         """Loads the data from all shards, removes the extra 'database' file,
         and writes the new number of shards to disk.
         """
-        pass
+        if self.mapping == {}:
+            raise Exception('No shards to remove')
+
+        data = self.load_data_from_shards()
+        self.mapping = self.load_map()
+
+        keys = [int(z) for z in list(self.mapping.keys())]
+        keys.sort()
+        new_shard_num = str(max(keys))
+
+        if new_shard_num == '0':
+            self.mapping = {}
+            self.write_map()
+            os.remove(f'data/0.txt')
+
+            return self.mapping
+
+        spliced_data = self._generate_sharded_data(int(new_shard_num), data)
+
+        for num, d in enumerate(spliced_data):
+            self._write_shard(num, d)
+
+        os.remove(f'data/{new_shard_num}.txt')
+        self.mapping.pop(new_shard_num)
+        self.write_map()
+
+    def shard_level(self):
+        files = os.listdir('data')
+        lowest_level = list(
+            filter(lambda file: file.startswith('0'), files)
+        )
+        highest_level = [int(file.split('-')[1].replace('.txt', ''))
+                         for file in lowest_level if '-' in file]
+
+        if highest_level:
+            return max(highest_level)
+
+        else:
+            return 0
 
     def add_replication(self):
         """Add a level of replication so that each shard has a backup. Label
@@ -117,7 +162,13 @@ class ShardHandler(object):
         to detect how many levels there are and appropriately add the next
         level.
         """
-        pass
+        replication_level = self.shard_level()
+        self.mapping = self.load_map()
+
+        for key in self.mapping.keys():
+            original = f'data/{key}.txt'
+            replication = f'data/{key}-{str(replication_level + 1)}.txt'
+            copyfile(original, replication)
 
     def remove_replication(self):
         """Remove the highest replication level.
@@ -140,13 +191,34 @@ class ShardHandler(object):
         2.txt (shard 2, primary)
         etc...
         """
-        pass
+        replication_level = self.shard_level()
+        self.mapping = self.load_map()
+
+        if replication_level != 0:
+            for key in self.mapping.keys():
+                replication = f'data/{key}-{str(replication_level)}.txt'
+                os.remove(replication)
+
+        else:
+            raise Exception('No replication to remove')
 
     def sync_replication(self):
         """Verify that all replications are equal to their primaries and that
          any missing primaries are appropriately recreated from their
          replications."""
-        pass
+        replication_level = self.shard_level()
+        self.mapping = self.load_map()
+
+        for key in self.mapping.keys():
+            if not os.path.exists(f'data/{key}.txt'):
+                replication = f'data/{key}-{str(replication_level)}.txt'
+                new_primary = f'data/{key}.txt'
+                copyfile(replication, new_primary)
+
+        for key in self.mapping.keys():
+            original = f'data/{key}.txt'
+            replication = f'data/{key}-{str(replication_level)}.txt'
+            copyfile(original, replication)
 
     def get_shard_data(self, shardnum=None):
         """Return information about a shard from the mapfile."""
@@ -168,6 +240,11 @@ s.build_shards(5, load_data_from_file())
 
 print(s.mapping.keys())
 
-s.add_shard()
+# s.add_shard()
+# s.remove_shard()
+# s.add_replication()
+# s.remove_replication()
+
+s.sync_replication()
 
 print(s.mapping.keys())
